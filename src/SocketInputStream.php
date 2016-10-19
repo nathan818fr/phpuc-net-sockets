@@ -22,9 +22,15 @@ class SocketInputStream extends InputStream
 
     public function read(int $len = 1)
     {
-        $buf = @socket_read($this->socket->getResource(), $len);
-        if ($buf === false) {
-            $this->socket->throwSocketError();
+        $this->socket->checkGlobalTimeoutStart('Read');
+        try {
+            $buf = @socket_read($this->socket->getResource(), $len);
+            if ($buf === false) {
+                $this->socket->throwSocketError();
+            }
+        }
+        finally {
+            $this->socket->checkGlobalTimeoutStop(false);
         }
 
         return $buf;

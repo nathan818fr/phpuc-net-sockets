@@ -5,6 +5,7 @@ use PhpUC\IO\Stream\Closeable;
 use PhpUC\IO\Stream\InputStream;
 use PhpUC\IO\Stream\IOException;
 use PhpUC\IO\Stream\OutputStream;
+use SebastianBergmann\CodeCoverage\RuntimeException;
 
 /**
  * Client or server socket supporting different protocols.
@@ -59,6 +60,23 @@ class Socket implements Closeable
      */
     protected $out;
 
+    /*
+     * Global timeout fields
+     */
+
+    /**
+     * @var int
+     */
+    protected $globalTimeout = null;
+
+    protected $globalTimeoutCurrentOperation;
+
+    protected $globalTimeoutStartTime;
+
+    protected $globalTimeoutOrigRead;
+
+    protected $globalTimeoutOrigWrite;
+
     /**
      * Create a socket (endpoint for communication).
      *
@@ -106,10 +124,61 @@ class Socket implements Closeable
     function throwSocketError()
     {
         $socketErrCode = socket_last_error();
-        if ($socketErrCode === SOCKET_EAGAIN && !$this->blocking) {
-            throw new SocketTryAgain();
+        if ($socketErrCode === SOCKET_EAGAIN) {
+            if (!$this->blocking) {
+                throw new SocketTryAgain();
+            } else {
+                $this->checkGlobalTimeoutStop(true);
+            }
         }
         throw new SocketException('Socket error: '.socket_strerror($socketErrCode), $socketErrCode);
+    }
+
+    function checkGlobalTimeoutStart($operation)
+    {
+        if ($this->globalTimeout !== null) {
+            if ($this->globalTimeoutCurrentOperation !== null) {
+                throw new RuntimeException('Previous global timeout check is already running!');
+            }
+
+            // Save current operation timeout
+            $reqTimeout = $this->{'get'.$operation.'Timeout'}();
+            $this->{'globalTimeoutOrig'.$operation} = $reqTimeout;
+
+            // Apply operation timeout
+            if ($reqTimeout === 0 || $reqTimeout > $this->globalTimeout) {
+                $this->{'set'.$operation.'Timeout'}($this->globalTimeout);
+            }
+
+            // Save start time
+            $this->globalTimeoutCurrentOperation = $operation;
+            $this->globalTimeoutStartTime = microtime(true);
+        }
+    }
+
+    function checkGlobalTimeoutStop($onTimeout)
+    {
+        $endTime = microtime(true);
+        if ($this->globalTimeoutCurrentOperation !== null) {
+            $operation = $this->globalTimeoutCurrentOperation;
+            $this->globalTimeoutCurrentOperation = null;
+
+            // Reset current operation timeout
+            $reqTimeout = $this->{'globalTimeoutOrig'.$operation};
+            $this->{'set'.$operation.'Timeout'}($reqTimeout);
+
+            // Reduce timeout
+            if ($onTimeout) {
+                $this->globalTimeout = 0;
+                throw new SocketException('Global timeout reached!', socket_last_error());
+            } else {
+                $elapsedTime = ceil(($endTime - $this->globalTimeoutStartTime) * 1000);
+                $this->globalTimeout -= $elapsedTime;
+                if ($this->globalTimeout < 1) {
+                    $this->globalTimeout = 1;
+                }
+            }
+        }
     }
 
     /**
@@ -318,6 +387,30 @@ class Socket implements Closeable
     public function selectException($timeout)
     {
         return $this->select('e', $timeout);
+    }
+
+    /**
+     * In PHP, the management of timeouts can be more complicated than in languagues more appropriate to network IO.
+     * The overall timeout defined how much time is given to future operations of reading and writing. Each read/wrire
+     * call will reduce the global timeout value. If it reach 0, an exception will be generated.
+     *
+     * Don't use with non-blocking socket.
+     *
+     * @param int $timeout timeout in millis; null to remove
+     */
+    public function setGlobalTimeout($timeout)
+    {
+        $this->globalTimeout = $timeout;
+    }
+
+    /**
+     * Returns the current global timeout value. Or null if there are none.
+     *
+     * @return int the current global timeout value
+     */
+    public function getGlobalTimeout()
+    {
+        return $this->globalTimeout;
     }
 
     /**

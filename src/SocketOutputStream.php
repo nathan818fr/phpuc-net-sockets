@@ -23,8 +23,15 @@ class SocketOutputStream extends OutputStream
         if ($len !== null) {
             $buf = substr($buf, 0, $len);
         }
-        if (@socket_write($this->socket->getResource(), $buf) === false) {
-            $this->socket->throwSocketError();
+
+        $this->socket->checkGlobalTimeoutStart('Write');
+        try {
+            if (@socket_write($this->socket->getResource(), $buf) === false) {
+                $this->socket->throwSocketError();
+            }
+        }
+        finally {
+            $this->socket->checkGlobalTimeoutStop(false);
         }
     }
 
