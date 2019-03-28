@@ -124,7 +124,7 @@ class Socket implements Closeable
     function throwSocketError()
     {
         $socketErrCode = socket_last_error();
-        if ($socketErrCode === SOCKET_EAGAIN) {
+        if ($socketErrCode === defined('SOCKET_EAGAIN') ? SOCKET_EAGAIN : SOCKET_EWOULDBLOCK) {
             if (!$this->blocking) {
                 throw new SocketTryAgain();
             } else {
